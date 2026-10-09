@@ -8,6 +8,29 @@
 #import "DOSceneDelegate.h"
 #import "DONavigationController.h"
 
+NSString *const DOAutoJailbreakRequestedNotification = @"DOAutoJailbreakRequestedNotification";
+NSString *const DOAutoJailbreakPendingKey = @"DOAutoJailbreakPending";
+
+static BOOL DOURLRequestsJailbreak(NSURL *url)
+{
+    if (!url) return NO;
+    NSString *scheme = url.scheme.lowercaseString;
+    if (![scheme isEqualToString:@"dopamine"]) return NO;
+    NSString *host = url.host.lowercaseString;
+    NSString *path = url.path.lowercaseString;
+    if ([host isEqualToString:@"jailbreak"]) return YES;
+    if ([path containsString:@"jailbreak"]) return YES;
+    // dopamine:// alone also means jailbreak for widget convenience
+    if (host.length == 0 && path.length <= 1) return YES;
+    return NO;
+}
+
+static void DOPostAutoJailbreakRequest(void)
+{
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:DOAutoJailbreakPendingKey];
+    [[NSNotificationCenter defaultCenter] postNotificationName:DOAutoJailbreakRequestedNotification object:nil];
+}
+
 @interface DOSceneDelegate ()
 
 @end
@@ -19,6 +42,22 @@
     window.rootViewController = [[DONavigationController alloc] init];
     [window makeKeyAndVisible];
     self.window = window;
+
+    for (UIOpenURLContext *urlContext in connectionOptions.URLContexts) {
+        if (DOURLRequestsJailbreak(urlContext.URL)) {
+            DOPostAutoJailbreakRequest();
+            break;
+        }
+    }
+}
+
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts {
+    for (UIOpenURLContext *urlContext in URLContexts) {
+        if (DOURLRequestsJailbreak(urlContext.URL)) {
+            DOPostAutoJailbreakRequest();
+            break;
+        }
+    }
 }
 
 + (void)relaunch

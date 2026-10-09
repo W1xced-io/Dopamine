@@ -22,16 +22,30 @@
 @property DOJailbreakButton *jailbreakBtn;
 @property NSArray<NSLayoutConstraint *> *jailbreakButtonConstraints;
 @property DOActionMenuButton *updateButton;
+@property DOActionMenuView *actionView;
+@property DOHeaderView *headerView;
 @property(nonatomic) BOOL hideStatusBar;
 @property(nonatomic) BOOL hideHomeIndicator;
 
 @end
 
+extern NSString *const DOAutoJailbreakRequestedNotification;
+extern NSString *const DOAutoJailbreakPendingKey;
+
 @implementation DOMainViewController
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     [self setupStack];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(requestJailbreakFromURL) name:@"DOAutoJailbreakRequestedNotification" object:nil];
+    // In case the URL arrived before the view existed, check the pending flag shortly after layout
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [self requestJailbreakFromURL];
+    });
 }
 
 -(void)setupStack
@@ -74,10 +88,11 @@
     }
 
     //Header
-    DOHeaderView *headerView = [[DOHeaderView alloc] initWithImage: [UIImage imageNamed:@"Dopamine"] subtitles: @[
+    self.headerView = [[DOHeaderView alloc] initWithImage: [UIImage imageNamed:@"Dopamine"] subtitles: @[
         [DOGlobalAppearance mainSubtitleString:[[DOEnvironmentManager sharedManager] versionSupportString]],
         [DOGlobalAppearance secondarySubtitleString:DOLocalizedString(@"Credits_Made_By")],
     ]];
+    DOHeaderView *headerView = self.headerView;
     
     [stackView addArrangedSubview:headerView];
 
@@ -87,7 +102,7 @@
     ]];
     
     //Action Menu
-    DOActionMenuView *actionView = [[DOActionMenuView alloc] initWithActions:@[
+    self.actionView = [[DOActionMenuView alloc] initWithActions:@[
         [UIAction actionWithTitle:DOLocalizedString(@"Menu_Settings_Title") image:[UIImage systemImageNamed:@"gearshape" withConfiguration:[DOGlobalAppearance smallIconImageConfiguration]] identifier:@"settings" handler:^(__kindof UIAction * _Nonnull action) {
             [self.navigationController pushViewController:[[DOSettingsController alloc] init] animated:YES];
         }],
@@ -105,7 +120,7 @@
             [self.navigationController pushViewController:[[DOCreditsViewController alloc] init] animated:YES];
         }]
     ] delegate:self];
-    
+    DOActionMenuView *actionView = self.actionView;
     [stackView addArrangedSubview: actionView];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -134,17 +149,7 @@
         jailbreakButtonImage = [UIImage systemImageNamed:@"lock.slash" withConfiguration:[DOGlobalAppearance smallIconImageConfiguration]];
     
     self.jailbreakBtn = [[DOJailbreakButton alloc] initWithAction: [UIAction actionWithTitle:jailbreakButtonTitle image:jailbreakButtonImage identifier:@"jailbreak" handler:^(__kindof UIAction * _Nonnull action) {
-        [actionView hide];
-        [self.jailbreakBtn expandButton: self.jailbreakButtonConstraints];
-
-        self.updateButton.userInteractionEnabled = NO;
-        [UIView animateWithDuration:0.75 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:2.0  options: UIViewAnimationOptionCurveEaseInOut animations:^{
-            [headerView setTransform:CGAffineTransformMakeTranslation(0, -25)];
-            self.updateButton.alpha = 0;
-        } completion:nil];
-        
-        [self startJailbreak];
-        
+        [self userDidRequestJailbreak];
     }]];
     self.jailbreakBtn.enabled = !isJailbroken && isSupported;
 
@@ -194,6 +199,44 @@
 {
     [super viewWillAppear:animated];
     [self.jailbreakBtn.button setTitle:[self jailbreakButtonTitle] forState:UIControlStateNormal];
+}
+
+- (void)userDidRequestJailbreak
+{
+    if (self.jailbreakBtn.didExpand) return;
+    if (!self.jailbreakBtn.enabled) return;
+    [self.actionView hide];
+    [self.jailbreakBtn expandButton:self.jailbreakButtonConstraints];
+
+    self.updateButton.userInteractionEnabled = NO;
+    [UIView animateWithDuration:0.75 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:2.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+        [self.headerView setTransform:CGAffineTransformMakeTranslation(0, -25)];
+        self.updateButton.alpha = 0;
+    } completion:nil];
+
+    [self startJailbreak];
+}
+
+- (void)requestJailbreakFromURL
+{
+    BOOL pending = [[NSUserDefaults standardUserDefaults] boolForKey:@"DOAutoJailbreakPending"];
+    if (!pending) return;
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"DOAutoJailbreakPending"];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        BOOL isJailbroken = [[DOEnvironmentManager sharedManager] isJailbroken] || [[DOEnvironmentManager sharedManager] isJailbrokenWithOtherJailbreak];
+        BOOL isSupported = [[DOEnvironmentManager sharedManager] isSupported];
+        if (isJailbroken || !isSupported) return;
+        [self.navigationController popToRootViewControllerAnimated:NO];
+        // View might not be laid out yet, retry once if button is not ready
+        if (!self.jailbreakBtn || self.jailbreakBtn.didExpand || !self.jailbreakBtn.enabled) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                [self userDidRequestJailbreak];
+            });
+            return;
+        }
+        [self userDidRequestJailbreak];
+    });
 }
 
 - (void)startJailbreak

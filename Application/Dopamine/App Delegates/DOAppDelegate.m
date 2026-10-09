@@ -7,6 +7,9 @@
 
 #import "DOAppDelegate.h"
 
+extern NSString *const DOAutoJailbreakRequestedNotification;
+extern NSString *const DOAutoJailbreakPendingKey;
+
 @interface DOAppDelegate ()
 
 @end
@@ -17,6 +20,21 @@
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     // Override point for customization after application launch.
     return YES;
+}
+
+- (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+    if (!url) return NO;
+    NSString *scheme = url.scheme.lowercaseString;
+    if (![scheme isEqualToString:@"dopamine"]) return NO;
+    NSString *host = url.host.lowercaseString;
+    NSString *path = url.path.lowercaseString;
+    BOOL wantsJailbreak = [host isEqualToString:@"jailbreak"] || [path containsString:@"jailbreak"] || (host.length == 0 && path.length <= 1);
+    if (wantsJailbreak) {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:DOAutoJailbreakPendingKey];
+        [[NSNotificationCenter defaultCenter] postNotificationName:DOAutoJailbreakRequestedNotification object:nil];
+        return YES;
+    }
+    return NO;
 }
 
 
